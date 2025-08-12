@@ -1,0 +1,21 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn.lock
+package-lock.json
+
+# Forge CLI artifacts (safe to ignore)
+.target/
+dist/
+
+# OS/editor
+.DS_Store
+*.swp
+
+# Optional: keep build output tracked because Custom UI serves from /static/hello-world/build
+# If you prefer to re-build every time, comment the next line out.
+# (We’ll keep build in git since we edited the built index.html)
+# (leave build INCLUDED by not ignoring it)
+
+# Don’t commit personal caches
+*.tmp
