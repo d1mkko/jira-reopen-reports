@@ -1,8 +1,16 @@
 const monthEl = document.getElementById('month');
 const runBtn = document.getElementById('run');
 const logEl = document.getElementById('log');
+const btnText = runBtn.querySelector('.btn-text');
+const btnSpin = runBtn.querySelector('.btn-spin');
 
 if (!monthEl.value) monthEl.value = new Date().toISOString().slice(0,7);
+
+const setBusy = (busy) => {
+  runBtn.disabled = busy;
+  btnText.style.display = busy ? 'none' : '';
+  btnSpin.style.display = busy ? 'inline-flex' : 'none';
+};
 
 const log = (msg, cls='') => {
   const div = document.createElement('div');
@@ -17,8 +25,9 @@ runBtn.addEventListener('click', async () => {
   clear();
   const month = monthEl.value;
   if (!/^\d{4}-\d{2}$/.test(month)) { log('Pick a month (YYYY-MM)', 'err'); return; }
+
+  setBusy(true);
   log(`Generating reports for ${month}…`);
-  runBtn.disabled = true;
   try {
     const resp = await fetch('/api/run', {
       method: 'POST',
@@ -27,7 +36,9 @@ runBtn.addEventListener('click', async () => {
     });
     if (!resp.ok) {
       const text = await resp.text();
-      throw new Error(`Server error: ${resp.status}\n${text}`);
+      log(`Server error ${resp.status}`, 'err');
+      log(text, 'err');
+      return;
     }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
@@ -38,11 +49,11 @@ runBtn.addEventListener('click', async () => {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    log('Download started ✅', 'ok');
+    log('Done. ZIP with two reports downloaded ✅', 'ok');
   } catch (e) {
     console.error(e);
     log(e.message || String(e), 'err');
   } finally {
-    runBtn.disabled = false;
+    setBusy(false);
   }
 });

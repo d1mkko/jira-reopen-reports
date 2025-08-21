@@ -17,26 +17,20 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Python resolution (prefer python3) ---
 function resolvePythonBin() {
-  // allow override via env
   if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
-
-  // try python3
   const tryBins = [
     'python3',
     'python',
     { cmd: 'py', args: ['-3'] }, // Windows launcher
   ];
-
   for (const candidate of tryBins) {
     let cmd, args;
     if (typeof candidate === 'string') { cmd = candidate; args = ['-V']; }
     else { cmd = candidate.cmd; args = [...candidate.args, '-V']; }
-
     try {
       const out = spawnSync(cmd, args, { encoding: 'utf8' });
       const combined = (out.stdout || '') + (out.stderr || '');
       if (out.status === 0 && /Python 3\./.test(combined)) {
-        // return exact invocation (for py -3 we return ['py','-3'])
         return typeof candidate === 'string' ? candidate : `${candidate.cmd} ${candidate.args.join(' ')}`;
       }
     } catch {}
@@ -50,8 +44,8 @@ function runPy(script, args = [], env = {}) {
   return new Promise((resolve, reject) => {
     if (!PY_BIN) {
       return reject(new Error(
-        'Python 3 not found. Please install Python 3 and ensure "python3" is on your PATH,\n' +
-        'or set PYTHON_BIN in your .env (e.g., PYTHON_BIN=/usr/local/bin/python3).'
+        'Python 3 not found. Install Python 3 and ensure "python3" is on PATH,\n' +
+        'or set PYTHON_BIN in .env (e.g., PYTHON_BIN=/usr/local/bin/python3).'
       ));
     }
     const [cmd, ...prefixArgs] = PY_BIN.split(' ');
@@ -70,7 +64,6 @@ function runPy(script, args = [], env = {}) {
   });
 }
 
-// Optional: quick check that required Python libs exist; returns error string if missing
 async function checkPythonDeps() {
   try {
     await runPy('-c', ['import sys; assert sys.version_info[0]==3; import requests, pandas']);
@@ -94,7 +87,6 @@ app.post('/api/run', async (req, res) => {
       return res.status(500).json({ ok: false, error: 'Server missing Jira credentials. Configure .env' });
     }
 
-    // Ensure Python3 + deps
     if (!PY_BIN) {
       return res.status(500).json({ ok: false, error: 'Python 3 not found on PATH. Install Python 3 or set PYTHON_BIN in .env' });
     }
@@ -107,13 +99,13 @@ app.post('/api/run', async (req, res) => {
 
     const exportPath = path.join(tmpDir, 'export.csv');
 
-    // 1) export
+    // 1) Build Jira export (internal only)
     await runPy(
       path.join(__dirname, 'scripts', 'export_jira.py'),
       ['--month', month, '--out', exportPath]
     );
 
-    // 2) reports
+    // 2) Run reports
     await runPy(
       path.join(__dirname, 'scripts', 'run_reports_wrapper.py'),
       [exportPath],
@@ -123,14 +115,13 @@ app.post('/api/run', async (req, res) => {
     const userReport = path.join(__dirname, 'reports', 'reopens_by_user.csv');
     const ticketReport = path.join(__dirname, 'reports', 'reopens_by_ticket.csv');
 
-    // 3) stream ZIP
+    // 3) Stream ZIP with ONLY the two reports
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="reopen_reports_${month}.zip"`);
 
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.on('error', err => { throw err; });
     archive.pipe(res);
-    archive.file(exportPath, { name: `export_${month}.csv` });
     archive.file(userReport, { name: `reopens_by_user_${month}.csv` });
     archive.file(ticketReport, { name: `reopens_by_ticket_${month}.csv` });
     await archive.finalize();
