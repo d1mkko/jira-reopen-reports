@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Reopen Reports UI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }
+    .row { display:flex; gap:12px; align-items:center; margin:10px 0; flex-wrap:wrap; }
+    label { min-width:100px; }
+    #log { white-space: pre-wrap; background:#f8fafc; border:1px solid #e5e7eb; padding:10px; border-radius:8px; height: 160px; overflow:auto; }
+    button { padding:8px 14px; }
+    .ok { color:#059669; } .err { color:#b91c1c; } .muted { color:#6b7280; }
+  </style>
+</head>
+<body>
+  <h2>Reopen Reports (local)</h2>
+  <div class="row">
+    <label for="month">Month:</label>
+    <input id="month" type="month">
+    <button id="run">Generate & download ZIP</button>
+  </div>
+  <div id="log" class="muted">Ready.</div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
