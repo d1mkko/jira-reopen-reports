@@ -1,87 +1,79 @@
-const monthEl = document.getElementById('month');
-const runBtn = document.getElementById('run');
-const logEl = document.getElementById('log');
-const btnText = runBtn.querySelector('.btn-text');
-const btnSpin = runBtn.querySelector('.btn-spin');
+// public/app.js
 
-const loginBtn = document.getElementById('login');
+const monthEl   = document.getElementById('month');
+const runBtn    = document.getElementById('run');
+const statusEl  = document.getElementById('status');
+const loginBtn  = document.getElementById('login');
 const logoutBtn = document.getElementById('logout');
-const authStatus = document.getElementById('auth-status');
+const modeChip  = document.getElementById('mode-chip');
 
-if (!monthEl.value) monthEl.value = new Date().toISOString().slice(0,7);
+// ===== Utils =====
+function prevMonthISO() {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth(); // 0..11
+  const prev = new Date(Date.UTC(y, m - 1, 1));
+  return prev.toISOString().slice(0,7);
+}
+function uiSetStatus(text) { statusEl.textContent = text || ''; }
 
-const setBusy = (busy) => {
-  runBtn.disabled = busy;
-  btnText.style.display = busy ? 'none' : '';
-  btnSpin.style.display = busy ? 'inline-flex' : 'none';
-};
-
-const log = (msg, cls='') => {
-  const div = document.createElement('div');
-  div.textContent = msg;
-  if (cls) div.className = cls;
-  logEl.appendChild(div);
-  logEl.scrollTop = logEl.scrollHeight;
-};
-const clear = () => (logEl.textContent = '');
-
-async function getAuthStatus() {
-  const r = await fetch('/auth/status', { cache: 'no-store' });
-  return r.json();
+async function fetchJSON(url, opts) {
+  const r = await fetch(url, { ...opts, headers: { 'Content-Type':'application/json', ...(opts?.headers||{}) }});
+  const text = await r.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  return { ok:r.ok, status:r.status, data, raw:text };
 }
 
-async function refreshAuthStatus() {
-  authStatus.textContent = 'Checking auth…';
-  try {
-    const js = await getAuthStatus();
-    if (js.signedIn) {
-      const name = js.account?.name || 'Atlassian';
-      authStatus.textContent = `Signed in: ${name}`;
-      loginBtn.style.display = 'none';
-      logoutBtn.style.display = '';
-    } else {
-      authStatus.textContent = js.hasPATFallback
-        ? 'Not signed in (using server token fallback)'
-        : 'Not signed in (no token fallback configured)';
-      loginBtn.style.display = '';
-      logoutBtn.style.display = 'none';
-    }
-  } catch {
-    authStatus.textContent = 'Auth status error';
+// ===== Auth status banner =====
+async function loadAuthStatus() {
+  const res = await fetchJSON('/auth/status');
+  const signedIn = !!res.data?.signedIn;
+  const mode = res.data?.mode || (signedIn ? 'oauth' : (res.data?.hasPATFallback ? 'pat' : 'none'));
+
+  loginBtn.style.display  = signedIn ? 'none' : '';
+  logoutBtn.style.display = signedIn ? '' : 'none';
+
+  if (mode !== 'none') {
+    modeChip.style.display = '';
+    modeChip.textContent = mode === 'oauth' ? 'Using OAuth' : 'Using PAT fallback';
+  } else {
+    modeChip.style.display = 'none';
   }
 }
 
-loginBtn.addEventListener('click', () => {
-  // just go to OAuth login; no auto-run flags
-  location.href = '/auth/login';
-});
-
+// ===== Actions =====
+loginBtn.addEventListener('click', () => { window.location.href = '/auth/login'; });
 logoutBtn.addEventListener('click', async () => {
-  await fetch('/auth/logout', { method: 'POST' });
-  await refreshAuthStatus();
+  await fetchJSON('/auth/logout', { method:'POST' });
+  await loadAuthStatus();
+  uiSetStatus('Signed out.');
 });
 
 runBtn.addEventListener('click', async () => {
-  clear();
   const month = monthEl.value;
-  if (!/^\d{4}-\d{2}$/.test(month)) { log('Pick a month (YYYY-MM)', 'err'); return; }
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    uiSetStatus('Pick a month (YYYY-MM)');
+    return;
+  }
 
-  setBusy(true);
-  log(`Generating reports for ${month}…`);
+  uiSetStatus(`Generating reports for ${month}…`);
+
   try {
-    const resp = await fetch('/api/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ month })
+    const r = await fetch('/api/run', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ month }),
     });
-    if (!resp.ok) {
-      const text = await resp.text();
-      log(`Server error ${resp.status}`, 'err');
-      log(text, 'err');
+
+    if (!r.ok) {
+      const err = await r.text();
+      uiSetStatus(`Server error ${r.status}\n${err}`);
       return;
     }
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
+
+    // download zip
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `reopen_reports_${month}.zip`;
@@ -89,21 +81,24 @@ runBtn.addEventListener('click', async () => {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    log('Done. ZIP with two reports downloaded ✅', 'ok');
+
+    uiSetStatus(`Done. ZIP with two reports downloaded ✔️`);
   } catch (e) {
-    console.error(e);
-    log(e.message || String(e), 'err');
-  } finally {
-    setBusy(false);
+    uiSetStatus(`Failed: ${e?.message || e}`);
   }
 });
 
-// On load: update auth UI and clean ?auth=ok if present
-(async function init() {
-  await refreshAuthStatus();
-  const url = new URL(location.href);
-  if (url.searchParams.get('auth') === 'ok') {
-    url.searchParams.delete('auth');
-    history.replaceState({}, '', url.toString());
-  }
+// ===== Init =====
+(function init(){
+  if (!monthEl.value) monthEl.value = prevMonthISO();
+  loadAuthStatus();
+
+  // Clean ?auth=ok from URL if present
+  try {
+    const url = new URL(location.href);
+    if (url.searchParams.get('auth') === 'ok') {
+      url.searchParams.delete('auth');
+      history.replaceState({}, '', url.toString());
+    }
+  } catch {}
 })();

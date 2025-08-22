@@ -1,109 +1,168 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Reopen Reports UI</title>
+  <meta charset="utf-8" />
+  <title>Reopen Reports</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {
-      --bg:#0b3d2e; --bg2:#095836; --card:#0f4a36; --border:#0a3e2d;
-      --muted:#cfe6da; --text:#f5fff9;
-      --accent:#16a34a; --accent-2:#22c55e; --accent-glow: rgba(34,197,94,.35);
-      --danger:#ef4444; --ok:#10b981;
+    :root{
+      --bg: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --green: #1faa4b; /* brighter green */
+      --green-600: #179941;
+      --border: #e5e7eb;
+      --chip: #eefaf3;
     }
-    *{box-sizing:border-box}
-    body {
-      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    *{ box-sizing:border-box; }
+    html, body { height: 100%; }
+    body{
+      margin:0;
+      font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
       color: var(--text);
-      background: radial-gradient(1200px 700px at 15% -10%, var(--bg2) 0%, var(--bg) 55%, var(--bg) 100%);
+      background: var(--bg);
     }
-    .wrap { max-width:880px; margin:40px auto; padding:0 20px; }
-    .card {
-      background: linear-gradient(180deg, var(--card), #0b3f2f);
+
+    .wrap{
+      max-width: 980px;
+      margin: 24px auto 64px;
+      padding: 0 16px;
+    }
+    header{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom: 18px;
+    }
+    h1{
+      margin:0;
+      font-size: 26px;
+      letter-spacing: .2px;
+    }
+    .auth{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      color: var(--muted);
+      font-size:14px;
+    }
+    .btn{
+      appearance:none; border:1px solid var(--green); background: var(--green);
+      color:#fff; padding:10px 16px; border-radius:8px; cursor:pointer;
+      font-weight:600;
+    }
+    .btn:hover{ background: var(--green-600); border-color: var(--green-600); }
+    .btn.outline{
+      background:#fff; color: var(--green); border-color: var(--green);
+    }
+    .btn.outline:hover{ background: #f6fff9; }
+
+    .card{
       border:1px solid var(--border);
-      box-shadow: 0 10px 30px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.04);
-      border-radius:18px; padding:24px;
-    }
-    h1 { font-size:24px; margin:0 0 4px; letter-spacing:.2px }
-    .sub { color: var(--muted); font-size:14px; margin-bottom:18px }
-    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:12px 0; }
-    label { font-size:14px; color: var(--muted); min-width:90px }
-
-    input[type="month"] {
-      background:#0a3e2d; color:var(--text); border:1px solid var(--border);
-      border-radius:10px; padding:10px 12px; font-size:14px; outline:none;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
-    }
-    input[type="month"]:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 4px rgba(34,197,94,.18);
-    }
-    button {
-      appearance:none; border:none; color:white;
-      background: linear-gradient(180deg, var(--accent), var(--accent-2));
-      padding:10px 16px; border-radius:10px; font-weight:700;
-      box-shadow: 0 6px 14px var(--accent-glow);
-      cursor:pointer; transition: transform .06s ease, filter .18s ease;
-    }
-    button:hover { filter: brightness(1.05) }
-    button:active { transform: translateY(1px) }
-    button[disabled]{ opacity:.65; cursor:default }
-    .btn-ghost {
-      background:#0a3e2d; border:1px solid var(--border); color: var(--text);
-      box-shadow:none; font-weight:600;
+      border-radius: 10px;
+      padding: 16px;
+      background: #fff;
     }
 
-    .log {
-      margin-top:14px; background:#0a3e2d; border:1px solid var(--border);
-      border-radius:10px; padding:12px; min-height:64px; color:#dff6ea;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px;
-      white-space: pre-wrap; max-height: 220px; overflow:auto;
+    /* controls row */
+    .row{
+      display:flex; gap:12px; align-items:center; flex-wrap:wrap;
     }
-    .ok { color: var(--ok) } .err { color: var(--danger) }
+    .field{
+      display:flex; align-items:center; gap:10px;
+    }
+    label{ color: var(--muted); }
+    input[type="month"]{
+      font:inherit; padding:8px 10px; border-radius:8px;
+      border:1px solid var(--border); outline:none;
+    }
+    .chip{
+      display:inline-flex; align-items:center; gap:6px;
+      padding:6px 10px; border-radius: 999px; background: var(--chip);
+      color: #0b6b2b; border:1px solid #cdeed7; font-size: 13px;
+    }
 
-    .spinner {
-      width:16px; height:16px; border:2px solid rgba(255,255,255,.35); border-top-color:white; border-radius:50%;
-      animation: spin .9s linear infinite; display:inline-block; vertical-align:middle;
+    /* status */
+    pre#status{
+      margin: 14px 0 0; white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      border:1px solid var(--border); border-radius:10px; padding:12px; background:#fafafa;
     }
-    @keyframes spin { to{ transform: rotate(360deg) } }
-    .grow { flex:1 }
-    .muted { color: var(--muted); }
+
+    /* table block */
+    .table-block{
+      margin-top: 20px;
+    }
+    .table-block h2{ margin: 0 0 8px; font-size: 18px; }
+    .table-note{ color: var(--muted); font-size:13px; margin-bottom:10px; }
+    table{
+      width:100%; border-collapse: collapse; font-size: 14px;
+    }
+    th, td{
+      padding: 10px 8px; border-bottom:1px solid var(--border); vertical-align: top;
+    }
+    th{ text-align:left; color: var(--muted); font-weight:600; }
+    .empty{
+      padding: 10px 0; color: var(--muted);
+    }
+
+    @media (max-width: 560px){
+      .auth{ display:none; }
+      h1{ font-size:22px; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
+    <header>
+      <h1>Reopen Reports</h1>
+      <div class="auth">
+        <span id="mode-chip" class="chip" style="display:none;"></span>
+        <button id="login"  class="btn outline">Sign in with Atlassian</button>
+        <button id="logout" class="btn outline" style="display:none;">Sign out</button>
+      </div>
+    </header>
+
     <div class="card">
-      <div class="row" style="justify-content:space-between; align-items:center">
-        <div>
-          <h1>Reopen Reports</h1>
-          <div class="sub">Generate <b>Reopens by User</b> and <b>Reopens by Ticket</b>. Jira export is internal only.</div>
-        </div>
-        <div class="row">
-          <div id="auth-status" class="muted">Checking auth…</div>
-          <button id="login" class="btn-ghost">Sign in with Atlassian</button>
-          <button id="logout" class="btn-ghost" style="display:none">Sign out</button>
-        </div>
-      </div>
-
       <div class="row">
-        <label for="month">Month</label>
-        <input id="month" type="month">
-        <button id="run">
-          <span class="btn-text">Generate & download</span>
-          <span class="btn-spin" style="display:none; align-items:center; gap:8px;">
-            <span class="spinner"></span> Working…
-          </span>
-        </button>
-        <div class="grow"></div>
+        <div class="field">
+          <label for="month">Month</label>
+          <input id="month" type="month" />
+        </div>
+        <button id="run" class="btn">Generate & download</button>
       </div>
 
-      <div id="log" class="log">Ready.</div>
-      <div class="sub" style="margin-top:10px">
-        Signed in → uses OAuth (no personal token). Not signed in → uses fallback token from server .env.
+      <pre id="status"></pre>
+
+      <!-- Monthly table placeholder (will be wired next step) -->
+      <div class="table-block">
+        <h2>Monthly reopen export</h2>
+        <div class="table-note">Defaults to previous month; updates when you change the month.</div>
+        <div id="table-shell" class="card" style="padding:0;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:120px;">Issue Key</th>
+                <th style="width:110px;">Issue Type</th>
+                <th style="width:120px;">Issue id</th>
+                <th>Summary</th>
+                <th style="width:180px;">Assignee</th>
+                <th style="width:130px;">Reopen Count</th>
+                <th style="width:260px;">Reopen Log</th>
+              </tr>
+            </thead>
+            <tbody id="preview-body">
+              <tr><td colspan="7" class="empty">No data yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
+
+    <p style="margin:16px 4px 0; color:var(--muted); font-size:13px;">
+      Tip: You can run via OAuth (preferred) or PAT fallback from <code>.env</code>. We’ll populate the table next.
+    </p>
   </div>
 
-  <script type="module" src="./app.js"></script>
+  <script src="./app.js" type="module"></script>
 </body>
 </html>
