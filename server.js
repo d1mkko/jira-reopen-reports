@@ -13,6 +13,8 @@ import { fileURLToPath } from 'url';
 
 dotenv.config();
 
+const pkceMap = new Map(); 
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -94,14 +96,16 @@ function runPy(file, args = [], extraEnv = {}) {
 
 // ---- AUTH ROUTES ----
 app.get('/auth/login', (req, res) => {
-  if (!ATLASSIAN_CLIENT_ID) {
-    return res.status(500).send('Missing ATLASSIAN_CLIENT_ID in .env');
-  }
-  const state = nanoid(16);
-  const verifier = genCodeVerifier();
-  const challenge = b64url(sha256(verifier));
+  if (!ATLASSIAN_CLIENT_ID) return res.status(500).send('Missing ATLASSIAN_CLIENT_ID in .env');
 
-  setPkceCookie(res, { state, verifier, createdAt: now() });
+  const state = nanoid(16);
+  const verifier = b64url(crypto.randomBytes(32));
+  const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
+
+  // cookie (primary)
+  setPkceCookie(res, { state, verifier, createdAt: Date.now() });
+  // in-memory fallback
+  pkceMap.set(state, { verifier, createdAt: Date.now() });
 
   const params = new URLSearchParams({
     audience: 'api.atlassian.com',
@@ -114,71 +118,140 @@ app.get('/auth/login', (req, res) => {
     code_challenge: challenge,
     code_challenge_method: 'S256',
   });
-  res.redirect(`${OAUTH_AUTH}?${params.toString()}`);
+  const authUrl = `${OAUTH_AUTH}?${params.toString()}`;
+  console.log('[oauth/login] redirecting to:', authUrl);
+  console.log('[oauth/login] CALLBACK_URL:', CALLBACK_URL);
+  res.redirect(authUrl);
 });
 
+
+// --- replace your current /auth/callback with this ---
 app.get('/auth/callback', async (req, res) => {
+  const usedCallback = CALLBACK_URL;
   try {
     const { code, state } = req.query;
+    console.log('[oauth/callback] code present:', !!code, 'state:', state);
+    console.log('[oauth/callback] CALLBACK_URL used:', usedCallback);
+
     if (!code || !state) return res.status(400).send('Missing code/state');
 
+    // 1) recover PKCE (cookie + in-memory fallback)
     let pkce;
     try { pkce = JSON.parse(req.cookies?.pkce || '{}'); } catch {}
     clearPkceCookie(res);
 
-    if (!pkce?.state || !pkce?.verifier) {
-      console.error('PKCE cookie missing/invalid');
+    if (!pkce?.verifier || pkce?.state !== state) {
+      const mem = pkceMap.get(state);
+      if (mem) {
+        pkce = { state, verifier: mem.verifier };
+        console.log('[oauth/callback] using in-memory PKCE fallback for state', state);
+      }
+    }
+    pkceMap.delete(state);
+
+    if (!pkce?.verifier) {
+      console.error('[oauth/callback] PKCE missing after cookie+memory checks');
       return res.status(400).send('Auth session expired. Please try again.');
     }
-    if (pkce.state !== state) {
-      console.error('State mismatch', { expected: pkce.state, got: state });
-      return res.status(400).send('State mismatch. Please try again.');
+
+    // Helper: try token exchange with several variants
+    async function tryTokenExchange(variant) {
+      const baseFields = {
+        grant_type: 'authorization_code',
+        client_id: ATLASSIAN_CLIENT_ID,
+        code,
+        redirect_uri: usedCallback,
+        code_verifier: pkce.verifier,
+      };
+      // If you set a secret in .env, we can include it (some setups require it)
+      if (process.env.ATLASSIAN_CLIENT_SECRET && variant.withSecret) {
+        baseFields.client_secret = process.env.ATLASSIAN_CLIENT_SECRET;
+      }
+
+      let headers, body;
+      if (variant.encoding === 'json') {
+        headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+        body = JSON.stringify(baseFields);
+      } else {
+        headers = { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' };
+        const sp = new URLSearchParams();
+        for (const [k, v] of Object.entries(baseFields)) sp.set(k, v);
+        body = sp.toString();
+      }
+
+      console.log(`[oauth/callback] EXCHANGE variant=${variant.encoding}${variant.withSecret ? '+secret' : ''}`);
+      const r = await fetch(OAUTH_TOKEN, {
+        method: 'POST',
+        headers,
+        body,
+      });
+      const text = await r.text();
+
+      return { ok: r.ok, status: r.status, text };
     }
 
-    // exchange code -> tokens
-    const tokenBody = {
-      grant_type: 'authorization_code',
-      client_id: ATLASSIAN_CLIENT_ID,
-      code,
-      redirect_uri: CALLBACK_URL,
-      code_verifier: pkce.verifier,
-    };
-    const tokenResp = await fetchJSON(OAUTH_TOKEN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(tokenBody),
-    });
-    if (!tokenResp.ok) {
-      console.error('Token exchange failed', tokenResp.status, tokenResp.text);
-      return res.status(500).send('Token exchange failed');
-    }
-    const t = tokenResp.data;
-    oauth.access_token = t.access_token;
-    oauth.refresh_token = t.refresh_token || null;
-    oauth.expires_at = now() + (t.expires_in || 3600) * 1000;
+    // Try, in order: JSON no secret → URLENC no secret → JSON with secret → URLENC with secret
+    const variants = [
+      { encoding: 'json',   withSecret: false },
+      { encoding: 'urlenc', withSecret: false },
+      { encoding: 'json',   withSecret: true  },
+      { encoding: 'urlenc', withSecret: true  },
+    ];
 
-    // discover cloudId
-    const resResp = await fetchJSON(OAUTH_RES, {
-      headers: { Authorization: `Bearer ${oauth.access_token}` },
-    });
+    let tokenData = null;
+    let lastErr = null;
+    for (const v of variants) {
+      const resp = await tryTokenExchange(v);
+      if (resp.ok) {
+        try {
+          tokenData = JSON.parse(resp.text);
+        } catch (e) {
+          return res.status(500).send('Token exchange returned non-JSON');
+        }
+        console.log('[oauth/callback] token exchange success with variant:', v);
+        break;
+      } else {
+        console.error('[oauth/callback] token exchange failed', v, resp.status, resp.text);
+        lastErr = resp;
+      }
+    }
+
+    if (!tokenData) {
+      return res
+        .status(500)
+        .send(`Token exchange failed (${lastErr?.status || 'unknown'}).\nResponse:\n${lastErr?.text || '(no body)'}\n`);
+    }
+
+    // Store tokens
+    oauth.access_token = tokenData.access_token;
+    oauth.refresh_token = tokenData.refresh_token || null;
+    oauth.expires_at = Date.now() + (tokenData.expires_in || 3600) * 1000;
+
+    // Discover Jira resources
+    console.log('[oauth/callback] GET', OAUTH_RES);
+    const resResp = await fetch(OAUTH_RES, { headers: { Authorization: `Bearer ${oauth.access_token}` } });
+    const resText = await resResp.text();
     if (!resResp.ok) {
-      console.error('Resources fetch failed', resResp.status, resResp.text);
-      return res.status(500).send('Resources fetch failed');
+      console.error('[oauth/callback] resources failed', resResp.status, resText);
+      return res.status(500).send(`Resources fetch failed (${resResp.status}).\n${resText}`);
     }
-    const resources = Array.isArray(resResp.data) ? resResp.data : [];
-    const jira = resources.find(r => (r.scopes || []).includes('read:jira-work')) || resources[0];
-    if (!jira) return res.status(500).send('No Jira site found');
+    const arr = JSON.parse(resText);
+    const jira = (Array.isArray(arr) ? arr : []).find(r => (r.scopes || []).includes('read:jira-work')) || arr[0];
+    if (!jira) return res.status(500).send('No Jira resources found');
 
     oauth.cloud_id = jira.id;
     oauth.account = { name: jira.name || null, url: jira.url || null };
+    console.log('[oauth/callback] success; cloud_id:', oauth.cloud_id);
 
-    // back to UI
     res.redirect(302, `http://localhost:${PORT}/?auth=ok`);
   } catch (e) {
-    console.error('Auth callback error', e);
-    res.status(500).send('Auth callback error: ' + e.message);
+    console.error('[oauth/callback] error:', e);
+    res.status(500).send('Auth callback error: ' + (e?.message || e));
   }
 });
+
+
+
 
 app.post('/auth/logout', (req, res) => {
   oauth.access_token = null;
