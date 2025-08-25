@@ -82,6 +82,80 @@ async function fetchJSON(url, opts = {}) {
   return { ok: r.ok, status: r.status, data, text };
 }
 
+// Filters export CSV by month, keeping ONLY Reopen Log lines that start with YYYY-MM of that month.
+// Rewrites "Reopen Log" and "Reopen Count" accordingly.
+// mode = "json" → returns JSON via stdout (for /api/preview)
+// mode = "csv"  → writes filtered CSV to outPath (for /api/run)
+async function filterReopenByMonth({ python, month, inPath, mode = 'json', outPath }) {
+  const py = [
+    'import pandas as pd, sys, re',
+    'month, inp, mode = sys.argv[1], sys.argv[2], sys.argv[3]',
+    'outp = sys.argv[4] if len(sys.argv)>4 else None',
+    '',
+    'df = pd.read_csv(inp)',
+    'df.columns = [c.strip() for c in df.columns]',
+    '',
+    '# find log/count columns under possible display names',
+    'log_col = None',
+    'for name in ["Reopen Log","Custom field (Reopen log )","Custom field (Reopen log)"]:',
+    '    if name in df.columns:',
+    '        log_col = name',
+    '        break',
+    '',
+    'cnt_col = None',
+    'if "Reopen Count" in df.columns:',
+    '    cnt_col = "Reopen Count"',
+    'elif "Custom field (Reopen Count)" in df.columns:',
+    '    cnt_col = "Custom field (Reopen Count)"',
+    '',
+    'if log_col is None:',
+    '    # No log column → return empty set so UI shows nothing for this month',
+    '    if mode=="json":',
+    '        print("[]")',
+    '    else:',
+    '        pd.DataFrame([]).to_csv(outp, index=False)',
+    '    sys.exit(0)',
+    '',
+    'def keep_month_lines(txt):',
+    '    if not isinstance(txt, str):',
+    '        return 0, ""',
+    '    parts = re.split(r\'(?=\\d{4}-\\d{2}-\\d{2})\', txt)',
+    '    kept = [p.strip() for p in parts if p.strip().startswith(month)]',
+    '    return len(kept), "\\n".join(kept)',
+    '',
+    'counts = []',
+    'newlog = []',
+    'for val in df[log_col].fillna(""):',
+    '    c, j = keep_month_lines(val)',
+    '    counts.append(c)',
+    '    newlog.append(j)',
+    '',
+    'df["__c"] = counts',
+    'df[log_col] = newlog',
+    'if cnt_col is not None:',
+    '    df[cnt_col] = df["__c"]',
+    'df = df[df["__c"] > 0].drop(columns=["__c"])',
+    '',
+    'if mode == "json":',
+    '    cols = ["Issue key","Issue Type","Issue id","Summary","Assignee","Reopen Count", log_col]',
+    '    present = [c for c in cols if c in df.columns]',
+    '    print(df[present].rename(columns={log_col:"Reopen Log"}).to_json(orient="records"))',
+    'else:',
+    '    df.to_csv(outp, index=False)',
+  ].join('\n');
+
+  return await new Promise((resolve, reject) => {
+    const args = ['-c', py, month, inPath, mode];
+    if (mode === 'csv') args.push(outPath);
+    execFile(python, args, { env: { ...process.env } }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr || err.message));
+      resolve({ stdout });
+    });
+  });
+}
+
+
+
 function runPy(file, args = [], extraEnv = {}) {
   return new Promise((resolve, reject) => {
     execFile(PYTHON, [file, ...args], { env: { ...process.env, ...extraEnv } }, (err, stdout, stderr) => {
@@ -277,113 +351,90 @@ app.get('/auth/status', (req, res) => {
 // 1) export_jira.py --month <YYYY-MM> --out <tmp/export.csv>
 // 2) run_reports_wrapper.py <tmp/export.csv>
 // 3) return ZIP with the two CSVs
+
 app.post('/api/run', async (req, res) => {
   try {
     const month = String(req.body?.month || '').trim();
     if (!/^\d{4}-\d{2}$/.test(month)) {
-      return res.status(400).json({ ok: false, error: 'Bad month format. Use YYYY-MM.' });
+      return res.status(400).json({ ok:false, error:'Bad month format. Use YYYY-MM.' });
     }
 
-    // Decide auth mode: Prefer OAuth; else PAT; else 401
+    // Auth: OAuth first, else PAT fallback, else 401
     const envForPy = { MONTH: month };
-
     if (oauth.access_token && oauth.cloud_id) {
-      // OAuth
       envForPy.OAUTH_ACCESS_TOKEN = oauth.access_token;
       envForPy.CLOUD_ID = oauth.cloud_id;
+      console.log('[run] using OAuth (cloudId:', oauth.cloud_id, ')');
     } else if (JIRA_BASE_URL && JIRA_EMAIL && JIRA_API_TOKEN) {
-      // PAT fallback
       envForPy.JIRA_BASE_URL  = JIRA_BASE_URL;
       envForPy.JIRA_EMAIL     = JIRA_EMAIL;
       envForPy.JIRA_API_TOKEN = JIRA_API_TOKEN;
+      console.log('[run] using PAT fallback for', JIRA_EMAIL, '→', JIRA_BASE_URL);
     } else {
-      // No auth available -> fail with clear message
-      return res.status(401).json({
-        ok: false,
-        error: 'No authentication available. Sign in with Atlassian or set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN in .env.',
-      });
+      return res.status(401).json({ ok:false, error:'No authentication available. Sign in with Atlassian or set JIRA_* in .env.' });
     }
 
-    // Pass optional custom-field overrides to Python if present
+    // Optional custom-field overrides
     if (REOPEN_COUNT_ID)   envForPy.REOPEN_COUNT_ID   = REOPEN_COUNT_ID;
     if (REOPEN_LOG_ID)     envForPy.REOPEN_LOG_ID     = REOPEN_LOG_ID;
     if (REOPEN_COUNT_NAME) envForPy.REOPEN_COUNT_NAME = REOPEN_COUNT_NAME;
     if (REOPEN_LOG_NAME)   envForPy.REOPEN_LOG_NAME   = REOPEN_LOG_NAME;
 
-    // temp dir
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reopen-'));
-    const exportPath = path.join(tmpDir, `export_${month}.csv`);
-
-    // 1) export
+    // 1) Export raw CSV
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reopen-run-'));
+    const exportPath = path.join(tmpDir, 'export.csv');
     await runPy(path.join(__dirname, 'scripts', 'export_jira.py'), ['--month', month, '--out', exportPath], envForPy);
 
-    // 2) reports
-    await runPy(path.join(__dirname, 'scripts', 'run_reports_wrapper.py'), [exportPath], envForPy);
-
-    // 3) collect reports (look in root and ./reports, with or without month suffix)
-    const reportCandidates = [
-      // by user
-      {
-        paths: [
-          path.join(__dirname, `reopens_by_user_${month}.csv`),
-          path.join(__dirname, 'reopens_by_user.csv'),
-          path.join(__dirname, 'reports', `reopens_by_user_${month}.csv`),
-          path.join(__dirname, 'reports', 'reopens_by_user.csv'),
-        ],
-        zip: `reopens_by_user_${month}.csv`,
-      },
-      // by ticket
-      {
-        paths: [
-          path.join(__dirname, `reopens_by_ticket_${month}.csv`),
-          path.join(__dirname, 'reopens_by_ticket.csv'),
-          path.join(__dirname, 'reports', `reopens_by_ticket_${month}.csv`),
-          path.join(__dirname, 'reports', 'reopens_by_ticket.csv'),
-        ],
-        zip: `reopens_by_ticket_${month}.csv`,
-      },
-    ];
-
-    const zip = new AdmZip();
-    let added = 0;
-
-    for (const item of reportCandidates) {
-      let found = null;
-      for (const p of item.paths) {
-        if (fs.existsSync(p)) { found = p; break; }
-      }
-      if (found) {
-        zip.addLocalFile(found, '', item.zip);
-        added++;
-      }
-    }
-
-    if (added !== reportCandidates.length) {
-      return res.status(500).json({
-        ok: false,
-        error:
-          'Reports not found after processing. Ensure scripts write reopens_by_user*.csv and reopens_by_ticket*.csv (root or ./reports)',
-      });
-    }
-
-    const zipPath = path.join(tmpDir, `reopen_reports_${month}.zip`);
-    zip.writeZip(zipPath);
-
-    res.download(zipPath, err => {
-      // cleanup temp
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-      // optional: cleanup generated reports in project root or ./reports
-      for (const item of reportCandidates) {
-        for (const p of item.paths) {
-          try { fs.unlinkSync(p); } catch {}
-        }
-      }
+    // 2) Filter by month → write filtered CSV (this is what reports will use)
+    const filteredPath = path.join(tmpDir, 'export_filtered.csv');
+    await filterReopenByMonth({
+      python: PYTHON,
+      month,
+      inPath: exportPath,
+      mode: 'csv',
+      outPath: filteredPath,
     });
+
+    // 3) Run your reports script against the FILTERED export
+    //    (adjust args if your wrapper expects positional names differently)
+    await runPy(path.join(__dirname, 'scripts', 'run_reports_wrapper.py'), [filteredPath], envForPy);
+
+    // 4) Find produced report files (try with month suffix first, then fallback)
+    const reportsDir = path.join(__dirname, 'reports');
+    const userCsvCandidates = [
+      path.join(reportsDir, `reopens_by_user_${month}.csv`),
+      path.join(reportsDir, 'reopens_by_user.csv'),
+    ];
+    const ticketCsvCandidates = [
+      path.join(reportsDir, `reopens_by_ticket_${month}.csv`),
+      path.join(reportsDir, 'reopens_by_ticket.csv'),
+    ];
+    const userCsv   = userCsvCandidates.find(p => fs.existsSync(p));
+    const ticketCsv = ticketCsvCandidates.find(p => fs.existsSync(p));
+
+    if (!userCsv || !ticketCsv) {
+      throw new Error('Reports not found after processing. Ensure scripts write reopens_by_user*.csv and reopens_by_ticket*.csv');
+    }
+
+    // 5) Package ZIP for download
+    const zip = new AdmZip();
+    zip.addLocalFile(userCsv, '', path.basename(userCsv));
+    zip.addLocalFile(ticketCsv, '', path.basename(ticketCsv));
+
+    const zipBuffer = zip.toBuffer();
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="reopen_reports_${month}.zip"`);
+    res.setHeader('Content-Length', String(zipBuffer.length));
+    res.status(200).send(zipBuffer);
+
+    // 6) Cleanup
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ ok: false, error: e.message });
+    console.error('[run] error', e);
+    res.status(500).json({ ok:false, error: `Report generation failed: ${e.message}` });
   }
 });
+
 
 // === Preview endpoint: returns JSON rows for the selected month ===
 app.get('/api/preview', async (req, res) => {
@@ -393,7 +444,7 @@ app.get('/api/preview', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Bad month format. Use YYYY-MM.' });
     }
 
-    // Choose auth: OAuth if signed-in else PAT fallback else 401
+    // Auth: OAuth first, else PAT fallback, else 401
     const envForPy = { MONTH: month };
     if (oauth.access_token && oauth.cloud_id) {
       envForPy.OAUTH_ACCESS_TOKEN = oauth.access_token;
@@ -411,55 +462,28 @@ app.get('/api/preview', async (req, res) => {
       });
     }
 
-    // Forward optional custom-field hints, same as /api/run
+    // Optional custom-field overrides
     if (REOPEN_COUNT_ID)   envForPy.REOPEN_COUNT_ID   = REOPEN_COUNT_ID;
     if (REOPEN_LOG_ID)     envForPy.REOPEN_LOG_ID     = REOPEN_LOG_ID;
     if (REOPEN_COUNT_NAME) envForPy.REOPEN_COUNT_NAME = REOPEN_COUNT_NAME;
     if (REOPEN_LOG_NAME)   envForPy.REOPEN_LOG_NAME   = REOPEN_LOG_NAME;
 
-    // temp dir + export
+    // Export raw CSV for the month
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reopen-prev-'));
     const exportPath = path.join(tmpDir, `export_${month}.csv`);
-
     await runPy(path.join(__dirname, 'scripts', 'export_jira.py'), ['--month', month, '--out', exportPath], envForPy);
 
-    // Convert CSV -> JSON via Python (pandas) to avoid adding a Node CSV dep
-    const pyOneLiner = [
-      'import pandas as pd, sys, json;',
-      'df = pd.read_csv(sys.argv[1]);',
-      // Normalize headers (strip spaces)
-      'df.columns = [c.strip() for c in df.columns];',
-      // Rename custom fields to requested labels
-      'rename_map = {',
-      // handle both exact and slightly different spacing
-      '"Custom field (Reopen Count)": "Reopen Count",',
-      '"Custom field (Reopen log )": "Reopen Log",',
-      '"Custom field (Reopen log)": "Reopen Log",',
-      '};',
-      'df = df.rename(columns=rename_map);',
-      // Select only the columns we need, if present
-      'cols = ["Issue key","Issue Type","Issue id","Summary","Assignee","Reopen Count","Reopen Log"];',
-      'present = [c for c in cols if c in df.columns];',
-      'df = df[present];',
-      'print(df.to_json(orient="records"))'
-    ].join(' ');
-
-    const { stdout } = await new Promise((resolve, reject) => {
-      execFile(PYTHON, ['-c', pyOneLiner, exportPath], { env: { ...process.env } }, (err, out, errout) => {
-        if (err) reject(new Error((errout || err.message)));
-        else resolve({ stdout: out });
-      });
+    // Filter to ONLY logs within the selected month and recompute counts (JSON out)
+    const { stdout } = await filterReopenByMonth({
+      python: PYTHON,
+      month,
+      inPath: exportPath,
+      mode: 'json',
     });
 
     let rows = [];
-    try { rows = JSON.parse(stdout); } catch {
-      return res.status(500).json({ ok:false, error:'Failed to parse preview JSON from CSV' });
-    }
+    try { rows = JSON.parse(stdout || '[]'); } catch { rows = []; }
 
-    // Optional: cap rows for UI responsiveness (remove cap if you want everything)
-    // rows = rows.slice(0, 500);
-
-    // Cleanup
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 
     return res.json({ ok: true, month, rows });
@@ -468,6 +492,8 @@ app.get('/api/preview', async (req, res) => {
     res.status(500).json({ ok:false, error: e.message });
   }
 });
+
+
 
 // ---- Serve UI from /public (no build step) ----
 app.use(express.static(path.join(__dirname, 'public')));
