@@ -89,22 +89,24 @@
     }
 
     /* table block */
-    .table-block{
-      margin-top: 20px;
-    }
+    .table-block{ margin-top: 20px; }
     .table-block h2{ margin: 0 0 8px; font-size: 18px; }
     .table-note{ color: var(--muted); font-size:13px; margin-bottom:10px; }
-    table{
-      width:100%; border-collapse: collapse; font-size: 14px;
-    }
+    table{ width:100%; border-collapse: collapse; font-size: 14px; }
     th, td{
       padding: 10px 8px; border-bottom:1px solid var(--border); vertical-align: top;
     }
     th{ text-align:left; color: var(--muted); font-weight:600; }
-    .empty{
-      padding: 10px 0; color: var(--muted);
-    }
+    .empty{ padding: 10px 0; color: var(--muted); }
 
+    /* login placeholder */
+    #login-placeholder{
+      display:none; text-align:center; padding: 28px 16px; color:#4b5563;
+      border:1px dashed #d1d5db; border-radius:10px; background:#fafafa;
+      margin-top: 14px;
+    }
+    #login-placeholder p{ margin: 0 0 8px; font-size: 16px; }
+    #login-placeholder .hint{ font-size:13px; color:#6b7280; }
     @media (max-width: 560px){
       .auth{ display:none; }
       h1{ font-size:22px; }
@@ -133,11 +135,19 @@
 
       <pre id="status"></pre>
 
-      <!-- Monthly table placeholder (will be wired next step) -->
+      <!-- Monthly table -->
       <div class="table-block">
         <h2>Monthly reopen export</h2>
-        <div class="table-note">Defaults to previous month; updates when you change the month.</div>
-        <div id="table-shell" class="card" style="padding:0;">
+        <div class="table-note">Defaults to current month; updates when you change the month.</div>
+
+        <!-- Placeholder shown when not logged in -->
+        <div id="login-placeholder">
+          <p>🔒 Please sign in with Atlassian to view Jira data.</p>
+          <div class="hint">Click “Sign in with Atlassian” in the top-right, then pick a month.</div>
+        </div>
+
+        <!-- Table section (hidden when not logged in) -->
+        <div id="preview-section" class="card" style="padding:0;">
           <table>
             <thead>
               <tr>
@@ -159,7 +169,7 @@
     </div>
 
     <p style="margin:16px 4px 0; color:var(--muted); font-size:13px;">
-      Tip: You can run via OAuth (preferred) or PAT fallback from <code>.env</code>. We’ll populate the table next.
+      Tip: Use OAuth (preferred) or PAT fallback via <code>.env</code>. The table shows the month’s export preview.
     </p>
   </div>
 

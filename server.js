@@ -385,6 +385,90 @@ app.post('/api/run', async (req, res) => {
   }
 });
 
+// === Preview endpoint: returns JSON rows for the selected month ===
+app.get('/api/preview', async (req, res) => {
+  try {
+    const month = String(req.query?.month || '').trim();
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ ok: false, error: 'Bad month format. Use YYYY-MM.' });
+    }
+
+    // Choose auth: OAuth if signed-in else PAT fallback else 401
+    const envForPy = { MONTH: month };
+    if (oauth.access_token && oauth.cloud_id) {
+      envForPy.OAUTH_ACCESS_TOKEN = oauth.access_token;
+      envForPy.CLOUD_ID = oauth.cloud_id;
+      console.log('[preview] using OAuth (cloudId:', oauth.cloud_id, ')');
+    } else if (JIRA_BASE_URL && JIRA_EMAIL && JIRA_API_TOKEN) {
+      envForPy.JIRA_BASE_URL  = JIRA_BASE_URL;
+      envForPy.JIRA_EMAIL     = JIRA_EMAIL;
+      envForPy.JIRA_API_TOKEN = JIRA_API_TOKEN;
+      console.log('[preview] using PAT fallback for', JIRA_EMAIL, '→', JIRA_BASE_URL);
+    } else {
+      return res.status(401).json({
+        ok: false,
+        error: 'No auth available. Sign in with Atlassian or set JIRA_* in .env.',
+      });
+    }
+
+    // Forward optional custom-field hints, same as /api/run
+    if (REOPEN_COUNT_ID)   envForPy.REOPEN_COUNT_ID   = REOPEN_COUNT_ID;
+    if (REOPEN_LOG_ID)     envForPy.REOPEN_LOG_ID     = REOPEN_LOG_ID;
+    if (REOPEN_COUNT_NAME) envForPy.REOPEN_COUNT_NAME = REOPEN_COUNT_NAME;
+    if (REOPEN_LOG_NAME)   envForPy.REOPEN_LOG_NAME   = REOPEN_LOG_NAME;
+
+    // temp dir + export
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reopen-prev-'));
+    const exportPath = path.join(tmpDir, `export_${month}.csv`);
+
+    await runPy(path.join(__dirname, 'scripts', 'export_jira.py'), ['--month', month, '--out', exportPath], envForPy);
+
+    // Convert CSV -> JSON via Python (pandas) to avoid adding a Node CSV dep
+    const pyOneLiner = [
+      'import pandas as pd, sys, json;',
+      'df = pd.read_csv(sys.argv[1]);',
+      // Normalize headers (strip spaces)
+      'df.columns = [c.strip() for c in df.columns];',
+      // Rename custom fields to requested labels
+      'rename_map = {',
+      // handle both exact and slightly different spacing
+      '"Custom field (Reopen Count)": "Reopen Count",',
+      '"Custom field (Reopen log )": "Reopen Log",',
+      '"Custom field (Reopen log)": "Reopen Log",',
+      '};',
+      'df = df.rename(columns=rename_map);',
+      // Select only the columns we need, if present
+      'cols = ["Issue key","Issue Type","Issue id","Summary","Assignee","Reopen Count","Reopen Log"];',
+      'present = [c for c in cols if c in df.columns];',
+      'df = df[present];',
+      'print(df.to_json(orient="records"))'
+    ].join(' ');
+
+    const { stdout } = await new Promise((resolve, reject) => {
+      execFile(PYTHON, ['-c', pyOneLiner, exportPath], { env: { ...process.env } }, (err, out, errout) => {
+        if (err) reject(new Error((errout || err.message)));
+        else resolve({ stdout: out });
+      });
+    });
+
+    let rows = [];
+    try { rows = JSON.parse(stdout); } catch {
+      return res.status(500).json({ ok:false, error:'Failed to parse preview JSON from CSV' });
+    }
+
+    // Optional: cap rows for UI responsiveness (remove cap if you want everything)
+    // rows = rows.slice(0, 500);
+
+    // Cleanup
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+    return res.json({ ok: true, month, rows });
+  } catch (e) {
+    console.error('[preview] error', e);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
 // ---- Serve UI from /public (no build step) ----
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => {
