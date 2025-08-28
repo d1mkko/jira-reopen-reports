@@ -6,173 +6,224 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root{
-      --bg: #ffffff;
-      --text: #111827;
-      --muted: #6b7280;
-      --green: #1faa4b; /* brighter green */
-      --green-600: #179941;
-      --border: #e5e7eb;
-      --chip: #eefaf3;
+      --bg:#fff;
+      --text:#111827;
+      --muted:#6b7280;
+      --border:#e5e7eb;
+      --brand:#16a34a;
+      --brand-600:#16a34a;
+      --brand-700:#15803d;
+      --soft:#f9fafb;
     }
     *{ box-sizing:border-box; }
-    html, body { height: 100%; }
-    body{
-      margin:0;
-      font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
-      color: var(--text);
-      background: var(--bg);
-    }
+    html,body{ margin:0; background:var(--bg); color:var(--text);
+      font:14px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif; }
 
-    .wrap{
-      max-width: 980px;
-      margin: 24px auto 64px;
-      padding: 0 16px;
-    }
-    header{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      margin-bottom: 18px;
-    }
-    h1{
-      margin:0;
-      font-size: 26px;
-      letter-spacing: .2px;
-    }
-    .auth{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      color: var(--muted);
-      font-size:14px;
-    }
-    .btn{
-      appearance:none; border:1px solid var(--green); background: var(--green);
-      color:#fff; padding:10px 16px; border-radius:8px; cursor:pointer;
-      font-weight:600;
-    }
-    .btn:hover{ background: var(--green-600); border-color: var(--green-600); }
-    .btn.outline{
-      background:#fff; color: var(--green); border-color: var(--green);
-    }
-    .btn.outline:hover{ background: #f6fff9; }
+    .container{ max-width:1200px; margin:22px auto; padding:0 16px; }
+    header{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+    h1{ margin:0; font-size:32px; letter-spacing:.2px; }
 
-    .card{
-      border:1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px;
-      background: #fff;
-    }
+    .row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .controls{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    @media (min-width:900px){ .controls{ flex-wrap:nowrap; } }
 
-    /* controls row */
-    .row{
-      display:flex; gap:12px; align-items:center; flex-wrap:wrap;
-    }
-    .field{
-      display:flex; align-items:center; gap:10px;
-    }
-    label{ color: var(--muted); }
-    input[type="month"]{
-      font:inherit; padding:8px 10px; border-radius:8px;
-      border:1px solid var(--border); outline:none;
-    }
-    .chip{
-      display:inline-flex; align-items:center; gap:6px;
-      padding:6px 10px; border-radius: 999px; background: var(--chip);
-      color: #0b6b2b; border:1px solid #cdeed7; font-size: 13px;
-    }
+    .btn{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px;
+      border:1px solid var(--border); background:#fff; color:#111; border-radius:10px; cursor:pointer; font-weight:600; }
+    .btn.primary{ background:var(--brand-600); border-color:var(--brand-600); color:#fff; }
+    .btn.primary:hover{ background:var(--brand-700); border-color:var(--brand-700); }
+    .btn.ghost{ background:#fff; color:#111; border:1px solid var(--border); }
 
-    /* status */
-    pre#status{
-      margin: 14px 0 0; white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      border:1px solid var(--border); border-radius:10px; padding:12px; background:#fafafa;
-    }
+    .chip{ padding:6px 10px; border-radius:9999px; background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; font-weight:600; }
 
-    /* table block */
-    .table-block{ margin-top: 20px; }
-    .table-block h2{ margin: 0 0 8px; font-size: 18px; }
-    .table-note{ color: var(--muted); font-size:13px; margin-bottom:10px; }
-    table{ width:100%; border-collapse: collapse; font-size: 14px; }
-    th, td{
-      padding: 10px 8px; border-bottom:1px solid var(--border); vertical-align: top;
-    }
-    th{ text-align:left; color: var(--muted); font-weight:600; }
-    .empty{ padding: 10px 0; color: var(--muted); }
+    /* Date range selector */
+    .range-wrap{ position:relative; }
+    .range-box{ display:flex; align-items:center; gap:8px; padding:10px 14px; border:1px solid var(--border);
+      border-radius:12px; background:#fff; cursor:pointer; user-select:none; min-width:360px; }
+    .range-box .date-part{ font-weight:700; letter-spacing:.2px; }
+    .range-box .arrow{ color:var(--muted); }
 
-    /* login placeholder */
-    #login-placeholder{
-      display:none; text-align:center; padding: 28px 16px; color:#4b5563;
-      border:1px dashed #d1d5db; border-radius:10px; background:#fafafa;
-      margin-top: 14px;
+    .popover{ position:absolute; z-index:100000; background:#fff; border:1px solid var(--border);
+      border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.08); width:340px; padding:10px; }
+    .hidden{ display:none; }
+    .cal-head{ display:flex; align-items:center; justify-content:space-between; padding:4px 6px 8px; }
+    .cal-head .title{ font-weight:700; }
+    .icon-btn{ border:1px solid var(--border); background:#fff; border-radius:8px; padding:6px 8px; cursor:pointer; }
+
+    .grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:6px; padding:6px; }
+    .dow{ text-align:center; color:var(--muted); font-weight:600; font-size:12px; }
+    .day{ padding:8px 0; text-align:center; border-radius:8px; cursor:pointer; user-select:none; border:1px solid transparent; }
+    .day:hover{ background:#f1f5f9; }
+    .day.out{ visibility:hidden; }
+    .day.sel{ background:#dcfce7; border-color:#86efac; font-weight:700; }
+    .day.in-range{ background:#f0fdf4; }
+    .legend{ color:var(--muted); font-size:12px; padding:6px 10px; }
+    .cal-actions{ display:flex; gap:8px; justify-content:flex-end; padding:6px 10px; }
+
+    /* Team filter */
+    .filter-wrap{ position:relative; }
+    .menu{
+      position:absolute; z-index:10010; background:#fff; border:1px solid var(--border);
+      border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,.08);
+      width:260px; padding:8px; top:48px; left:0;
     }
-    #login-placeholder p{ margin: 0 0 8px; font-size: 16px; }
-    #login-placeholder .hint{ font-size:13px; color:#6b7280; }
-    @media (max-width: 560px){
-      .auth{ display:none; }
-      h1{ font-size:22px; }
+    .menu.hidden{ display:none; }
+    .menu-head{ padding:6px 6px 10px; }
+    .menu-head input{
+      width:100%; padding:8px 10px; border:1px solid var(--border);
+      border-radius:8px; outline:none;
     }
+    .menu-list{
+      max-height:240px; overflow:auto; border:1px solid var(--border);
+      border-radius:8px; padding:6px; background:#fafafa;
+    }
+    .menu-item{ display:flex; align-items:center; gap:8px; padding:6px 6px; border-radius:6px; cursor:pointer; }
+    .menu-item:hover{ background:#f1f5f9; }
+    .menu-actions{ display:flex; justify-content:space-between; gap:8px; padding-top:8px; }
+
+    /* Info */
+    #status{ margin:10px 0 12px; color:var(--muted); white-space:pre-wrap; }
+
+    /* Card + table */
+    .card{ background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px;
+      box-shadow:0 2px 10px rgba(0,0,0,.04); overflow:hidden; }
+    .subtle{ color:var(--muted); margin:6px 0 14px; }
+
+    .table-wrap{ overflow:auto; }
+    .table{ width:100%; border-collapse:separate; border-spacing:0; table-layout:auto; }
+
+    /* Column sizing */
+    .col-issue-key    { width:8rem; }
+    .col-issue-type   { width:11rem; }
+    .col-issue-id     { width:7rem; }
+    .col-assignee     { width:12rem; }
+    .col-reopen-count { width:7rem; }
+    .col-summary      { width:40%; min-width:28rem; }
+    .col-reopen-log   { width:45%; min-width:32rem; }
+
+    .table thead th{ position:sticky; top:0; z-index:1; background:#f9fafb; border-bottom:1px solid var(--border);
+      text-align:left; font-weight:700; color:#374151; padding:10px 12px; }
+    .table td{ padding:10px 12px; vertical-align:top; border-top:1px solid var(--border); word-break:normal; }
+    .table tbody tr:first-child td{ border-top:0; }
+
+    .table td.issue-key,
+    .table td.issue-type,
+    .table td.issue-id,
+    .table td.assignee,
+    .table td.reopen-count{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+    .table td.summary,
+    .table td.reopen-log{ white-space:normal; overflow-wrap:anywhere; }
+    .table td.reopen-log > div + div{ margin-top:6px; }
+
+    .table tbody tr:nth-child(odd){ background:#fcfcfd; }
+
+    /* Login placeholder */
+    #login-placeholder{ display:none; padding:14px; border:1px dashed var(--border);
+      border-radius:10px; color:#374151; background:var(--soft); }
   </style>
 </head>
 <body>
-  <div class="wrap">
+  <div class="container">
     <header>
       <h1>Reopen Reports</h1>
-      <div class="auth">
-        <span id="mode-chip" class="chip" style="display:none;"></span>
-        <button id="login"  class="btn outline">Sign in with Atlassian</button>
-        <button id="logout" class="btn outline" style="display:none;">Sign out</button>
+      <div class="row">
+        <span id="mode-chip" class="chip" style="display:none;">Using OAuth</span>
+        <button id="login"  class="btn">Sign in with Atlassian</button>
+        <button id="logout" class="btn">Sign out</button>
       </div>
     </header>
 
-    <div class="card">
-      <div class="row">
-        <div class="field">
-          <label for="month">Month</label>
-          <input id="month" type="month" />
-        </div>
-        <button id="run" class="btn">Generate & download</button>
-      </div>
-
-      <pre id="status"></pre>
-
-      <!-- Monthly table -->
-      <div class="table-block">
-        <h2>Monthly reopen export</h2>
-        <div class="table-note">Defaults to current month; updates when you change the month.</div>
-
-        <!-- Placeholder shown when not logged in -->
-        <div id="login-placeholder">
-          <p>🔒 Please sign in with Atlassian to view Jira data.</p>
-          <div class="hint">Click “Sign in with Atlassian” in the top-right, then pick a month.</div>
+    <!-- Controls -->
+    <div class="row controls" style="margin-bottom:8px;">
+      <!-- Date range -->
+      <div class="range-wrap">
+        <div id="rangeDisplay" class="range-box" aria-expanded="false">
+          <span id="rangeText">—</span>
+          <span class="arrow">→</span>
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 8l4 4 4-4" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
 
-        <!-- Table section (hidden when not logged in) -->
-        <div id="preview-section" class="card" style="padding:0;">
-          <table>
-            <thead>
-              <tr>
-                <th style="width:120px;">Issue Key</th>
-                <th style="width:110px;">Issue Type</th>
-                <th style="width:120px;">Issue id</th>
-                <th>Summary</th>
-                <th style="width:180px;">Assignee</th>
-                <th style="width:130px;">Reopen Count</th>
-                <th style="width:260px;">Reopen Log</th>
-              </tr>
-            </thead>
-            <tbody id="preview-body">
-              <tr><td colspan="7" class="empty">No data yet.</td></tr>
-            </tbody>
-          </table>
+        <!-- Date range popover (single calendar) -->
+        <div id="rangePopover" class="popover hidden" role="dialog" aria-modal="true">
+          <div class="cal-head">
+            <button id="prevMonth" class="icon-btn" title="Previous month">‹</button>
+            <div id="monthLabel" class="title">Month YYYY</div>
+            <button id="nextMonth" class="icon-btn" title="Next month">›</button>
+          </div>
+
+          <!-- DOW row -->
+          <div class="grid" aria-hidden="true" style="padding-top:0;">
+            <div class="dow">Mon</div><div class="dow">Tue</div><div class="dow">Wed</div>
+            <div class="dow">Thu</div><div class="dow">Fri</div><div class="dow">Sat</div><div class="dow">Sun</div>
+          </div>
+          <!-- Days grid -->
+          <div id="calGrid" class="grid" style="padding-top:0;"></div>
+
+          <div id="legendText" class="legend">Click two dates to set range</div>
+          <div class="cal-actions">
+            <button id="cancelRange" class="btn ghost" type="button">Cancel</button>
+            <button id="applyRange"  class="btn primary" type="button">Apply</button>
+          </div>
         </div>
       </div>
+
+      <!-- Team filter -->
+      <div class="filter-wrap" style="margin-left:4px;">
+        <button id="teamBtn" class="btn">Teams: All</button>
+        <div id="teamMenu" class="menu hidden" role="dialog" aria-modal="true">
+          <div class="menu-head">
+            <input id="teamSearch" type="text" placeholder="Search team…" />
+          </div>
+          <div id="teamList" class="menu-list"></div>
+          <div class="menu-actions">
+            <button id="teamClear" class="btn ghost" type="button">Clear</button>
+            <button id="teamApply" class="btn primary" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <button id="run" class="btn primary">Generate &amp; download</button>
     </div>
 
-    <p style="margin:16px 4px 0; color:var(--muted); font-size:13px;">
-      Tip: Use OAuth (preferred) or PAT fallback via <code>.env</code>. The table shows the month’s export preview.
-    </p>
+    <div id="status">Preview will appear below.</div>
+
+    <!-- Shows when not authenticated -->
+    <div id="login-placeholder">Please sign in with Atlassian to preview and generate reports.</div>
+
+    <!-- Preview section -->
+    <section id="preview-section" style="display:none;">
+      <h2 style="margin:10px 0 6px;">Reopen export (date range)</h2>
+      <div class="card table-wrap">
+        <table class="table">
+          <colgroup>
+            <col class="col-issue-key" />
+            <col class="col-issue-type" />
+            <col class="col-issue-id" />
+            <col class="col-summary" />
+            <col class="col-assignee" />
+            <col class="col-reopen-count" />
+            <col class="col-reopen-log" />
+          </colgroup>
+
+          <thead>
+            <tr>
+              <th>Issue Key</th>
+              <th>Issue Type</th>
+              <th>Issue id</th>
+              <th>Summary</th>
+              <th>Assignee</th>
+              <th>Reopen Count</th>
+              <th>Reopen Log</th>
+            </tr>
+          </thead>
+          <tbody id="preview-body">
+            <tr><td colspan="7" class="empty">No data yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 
-  <script src="./app.js" type="module"></script>
+  <script src="/app.js" type="module"></script>
 </body>
 </html>
